@@ -1,0 +1,47 @@
+{
+  "name": "pjcare",
+  "version": "1.0.0",
+  "productName": "PjCare",
+  "description": "Application Electron PjCare pour la numérisation rapide et intuitive de documents",
+  "author": "TrabelsiMohamedAmine <testdir@africomservices.com>",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "node-twain": "^0.0.16",
+    "pdfkit": "^0.17.1"
+  },
+  "devDependencies": {
+    "electron": "^25.0.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.africom.pjcare",
+    "productName": "PjCare",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!dist/**",
+      "!node_modules/electron-builder/**"
+    ],
+    "forceCodeSigning": false,
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico",
+      "signAndEditExecutable": false,
+      "verifyUpdateCodeSignature": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

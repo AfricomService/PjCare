@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <title>PjCare</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background: linear-gradient(135deg, #e3f2fd, #f5f7fa);
+      color: #333;
+      padding: 2rem;
+      margin: 0;
+      animation: fadeIn 0.6s ease-out;
+    }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+    h1 {
+      color: #0d47a1; font-size: 2.4rem; font-weight: 600;
+      margin-bottom: 0.5rem; transition: color 0.3s; cursor: default;
+      display: inline-block;
+    }
+    h1:hover { color: #1565c0; }
+    .tagline { font-size: 1rem; color: #555; opacity: 0; transition: opacity 0.3s; }
+    h1:hover + .tagline { opacity: 1; }
+    .container {
+      max-width: 860px; margin: auto; background: #fff; padding: 2rem;
+      border-radius: 20px; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.08);
+    }
+    label {
+      font-weight: 600; display: flex; flex-direction: column; margin-bottom: 1rem; color: #444;
+    }
+    input, select, button {
+      font-size: 1rem; padding: 0.75rem 1rem; border-radius: 10px;
+      border: 1px solid #ccc; margin-top: 0.5rem; transition: all 0.3s;
+    }
+    input:focus, select:focus {
+      border-color: #2196f3; box-shadow: 0 0 0 4px rgba(33, 150, 243, 0.2); outline: none;
+    }
+    .controls { display: grid; gap: 1.5rem; margin-bottom: 1.5rem; }
+    .controls.four { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+    button, .link-file {
+      background: linear-gradient(135deg, #2196f3, #1565c0);
+      color: #fff; border: none; font-weight: 600; padding: 1rem 2rem;
+      border-radius: 12px; margin-top: 1rem; cursor: pointer;
+      position: relative; overflow: hidden; box-shadow: 0 4px 16px rgba(33, 150, 243, 0.2);
+      transition: all 0.3s; display: inline-block; text-decoration: none;
+    }
+    button::before, .link-file::before {
+      content: ""; position: absolute; top: 0; left: -100%; width: 100%; height: 100%;
+      background: linear-gradient(120deg, transparent, rgba(255, 255, 255, 0.25), transparent);
+      transition: all 0.6s;
+    }
+    button:hover::before, .link-file:hover::before { left: 100%; }
+    button:hover, .link-file:hover {
+      transform: translateY(-2px); box-shadow: 0 6px 20px rgba(33, 150, 243, 0.3);
+    }
+    button.loading::after {
+      content: ""; width: 22px; height: 22px; border: 3px solid transparent;
+      border-top: 3px solid #fff; border-radius: 50%; animation: spin 0.8s linear infinite;
+      position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
+    }
+    @keyframes spin { to { transform: translateY(-50%) rotate(360deg); } }
+    .status { margin-top: 2rem; font-size: 1rem; transition: color 0.3s; }
+    .error { color: #d32f2f; }
+    #previewContainer { position: relative; }
+    #loading { text-align: center; font-size: 1.2rem; color: #666; display: none; }
+    img {
+      max-width: 100%; margin-top: 1.5rem; border-radius: 12px; box-shadow: 0 6px 14px rgba(0, 0, 0, 0.1);
+      display: block; transition: transform 0.3s, opacity 0.5s; }
+    img:hover { transform: scale(1.02); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>PjCare</h1>
+    <p class="tagline">Votre solution de numérisation rapide et intuitive</p>
+
+    <!-- ✉️ Formulaire de login -->
+    <div id="loginForm">
+      <label>
+        Utilisateur :
+        <input type="text" id="username" />
+      </label>
+      <label>
+        Mot de passe :
+        <input type="password" id="password" />
+      </label>
+      <button id="loginBtn">🔑 Se connecter</button>
+      <p id="loginError" class="status error" style="display: none"></p>
+    </div>
+
+    <!-- 📠 UI de scan et d’affectation (après connexion) -->
+    <div id="scanUI" style="display: none">
+      <label>
+        Scanner :
+        <select id="scanner"><option>Chargement…</option></select>
+      </label>
+      <div id="controls" class="controls four">
+        <label>
+          Nom du document :
+          <input type="text" id="docName" placeholder="Facture_2025-05-24" />
+        </label>
+        <label>
+          Format :
+          <select id="format">
+            <option value="jpg" selected>JPEG</option>
+            <option value="png">PNG</option>
+            <option value="pdf">PDF</option>
+          </select>
+        </label>
+        <label>
+          DPI :
+          <input type="number" id="dpi" value="150" min="50" max="600" />
+        </label>
+        <label id="jpegQualityLabel">
+          Qualité JPG :
+          <input type="number" id="jpegquality" value="75" min="1" max="100" />
+        </label>
+      </div>
+      <button id="scanBtn">📠 Numériser</button>
+
+      <hr/>
+
+      <h2>Aperçu</h2>
+      <p id="status" class="status">Cliquez sur Numériser</p>
+      <div id="previewContainer">
+        <div id="loading">⏳ Chargement…</div>
+        <img id="preview" style="display: none" />
+      </div>
+      <a id="fileLink" class="link-file" href="#" download style="display: none">⬇️ Télécharger</a>
+      <br />
+
+      <!-- ► Cette section ne s’affichera qu’après succès de la numérisation ! -->
+      <div id="assignContainer" style="display: none">
+        <label>
+          Réf. de la corresp. :
+          <input type="text" id="correspRef" placeholder="EXP-12345-25" />
+        </label>
+        <button id="assignBtn">🖇️ Affecter à une corresp</button>
+        <p id="assignStatus" class="status"></p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const AUTH_URL   = "http://localhost:8090/api/authenticate";
+    const SCAN_API   = "http://localhost:7777/api/Acquire";
+    const UPLOAD_API = "http://localhost:8080/api/pjs/uploadPj";
+    const ASSIGN_API = "http://localhost:8080/api/pjs/assign";
+
+    let jwtToken     = null;
+    let lastBase64   = null;
+    let lastFilename = "";
+    let lastPjId     = null;
+
+    // 1) Authentification
+    async function authenticate(u, p) {
+      const res = await fetch(AUTH_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: u, password: p, rememberMe: false })
+      });
+      if (!res.ok) throw new Error("Identifiants invalides");
+      return (await res.json()).id_token;
+    }
+
+    document.getElementById("loginBtn").onclick = async () => {
+      const u = document.getElementById("username").value;
+      const p = document.getElementById("password").value;
+      const e = document.getElementById("loginError");
+      e.style.display = "none";
+      try {
+        jwtToken = await authenticate(u, p);
+        document.getElementById("loginForm").style.display = "none";
+        document.getElementById("scanUI").style.display  = "block";
+        initScanUI();
+      } catch(err) {
+        e.textContent = err.message;
+        e.style.display = "block";
+      }
+    };
+
+    // 2) Initialisation de l’UI de scan
+    function initScanUI() {
+      const sel            = document.getElementById("scanner"),
+            fmt            = document.getElementById("format"),
+            dpi            = document.getElementById("dpi"),
+            jq             = document.getElementById("jpegquality"),
+            jqLbl          = document.getElementById("jpegQualityLabel"),
+            ctrls          = document.getElementById("controls"),
+            scanBtn        = document.getElementById("scanBtn"),
+            assignContainer= document.getElementById("assignContainer"),  // <— Notre nouveau conteneur
+            assignBtn      = document.getElementById("assignBtn"),
+            status         = document.getElementById("status"),
+            loading        = document.getElementById("loading"),
+            prev           = document.getElementById("preview"),
+            fileL          = document.getElementById("fileLink"),
+            refInput       = document.getElementById("correspRef"),
+            assignSt       = document.getElementById("assignStatus");
+
+      // toggle qualité JPG
+      fmt.onchange = () => {
+        if (fmt.value === "jpg") {
+          jqLbl.style.display = "flex";
+          ctrls.classList.replace("three", "four");
+        } else {
+          jqLbl.style.display = "none";
+          ctrls.classList.replace("four", "three");
+        }
+      };
+      fmt.onchange();
+
+      // charger la liste des scanners
+      fetch("http://localhost:7777/api/GetListScanner")
+        .then(r => r.json())
+        .then(j => {
+          sel.innerHTML = "";
+          if (j.status === 200 && j.scanners.length) {
+            j.scanners.forEach(s => sel.add(new Option(s, s)));
+          } else {
+            sel.innerHTML = "<option>Aucun scanner</option>";
+          }
+        });
+
+      // bouton Numériser
+      scanBtn.onclick = async () => {
+        const device = sel.value,
+              name   = document.getElementById("docName").value.trim();
+        scanBtn.classList.add("loading");
+        status.textContent      = "⏳ Numérisation…";
+        loading.style.display   = "block";
+        prev.style.display      = "none";
+        fileL.style.display     = "none";
+        assignContainer.style.display = "none";  // Masquer le conteneur d’affectation par défaut
+        assignSt.textContent    = "";
+
+        const params = { source: device, format: fmt.value, dpi: dpi.value };
+        if (fmt.value === "jpg") params.jpegquality = jq.value;
+        if (name) params.name = name;
+
+        try {
+          const res = await fetch(`${SCAN_API}?${new URLSearchParams(params)}`, {
+            headers: { "Authorization": `Bearer ${jwtToken}` }
+          });
+          const j = await res.json();
+          scanBtn.classList.remove("loading");
+          loading.style.display = "none";
+          if (j.status === 200) {
+            // Affiche la prévisualisation
+            if (fmt.value !== "pdf") {
+              prev.src = `data:image/${fmt.value};base64,${j.data}`;
+              prev.style.display = "block";
+              lastBase64 = j.data;
+            }
+            lastFilename = j.file;
+            fileL.href = `${SCAN_API.replace("/Acquire", "")}/Temp/${j.file}`;
+            fileL.style.display = "inline-block";
+            status.textContent = "✅ Numérisation OK";
+
+            // 👉 Afficher **seulement** à ce moment-là le champ Réf./bouton Affecter
+            assignContainer.style.display = "block";
+          } else {
+            throw new Error(j.error);
+          }
+        } catch(err) {
+          scanBtn.classList.remove("loading");
+          loading.style.display = "none";
+          status.textContent = "❌ " + err.message;
+        }
+      };
+
+      // bouton « Affecter une corresp »
+      assignBtn.onclick = async () => {
+        assignSt.textContent = "";
+        const ref = refInput.value.trim();
+        if (!ref) {
+          assignSt.textContent = "❌ Veuillez saisir une référence.";
+          return;
+        }
+        if (!lastBase64) {
+          assignSt.textContent = "❌ Pas de document scanné.";
+          return;
+        }
+        assignBtn.classList.add("loading");
+        assignSt.textContent = "Envoi…";
+
+        try {
+          // 1) uploadPj
+          const bin = atob(lastBase64);
+          const arr = new Uint8Array([...bin].map(c => c.charCodeAt(0)));
+          const blob = new Blob([arr], { type: `image/${fmt.value}` });
+          const form = new FormData();
+          form.append("file", blob, lastFilename);
+          form.append("correspId", "0"); // par défaut on donne 0, le back-end ignore car on réaffectera après
+
+          const upRes = await fetch(UPLOAD_API, {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${jwtToken}` },
+            body: form
+          });
+          if (!upRes.ok) {
+            throw new Error(await upRes.text());
+          }
+          const upBody = await upRes.json();
+          lastPjId = upBody.pjId;
+
+          // 2) assignPjToCorresp
+          const asRes = await fetch(`${ASSIGN_API}?reference=${encodeURIComponent(ref)}&pjId=${lastPjId}`, {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${jwtToken}` }
+          });
+          if (!asRes.ok) throw new Error("Échec d’affectation");
+
+          assignSt.textContent = "✅ PJ créée et affectée.";
+        } catch(err) {
+          assignSt.textContent = "❌ " + err.message;
+        } finally {
+          assignBtn.classList.remove("loading");
+        }
+      };
+    }
+  </script>
+</body>
+</html>
