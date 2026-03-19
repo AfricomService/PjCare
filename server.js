@@ -8,21 +8,22 @@ const os           = require("os");
 
 const app = express();
 
-// --- CORS : autoriser Angular (localhost:4200) et toute autre origine locale ---
 app.use(cors());
-
 app.use(express.json());
 
-// --- TEMP DIR ---
+// ─────────────────────────────────────────────
+// TEMP DIR
+// ─────────────────────────────────────────────
 const tmpBase  = process.env.TEMP || process.env.TMP || os.tmpdir();
 const TEMP_DIR = path.join(tmpBase, "CorrespPj");
 fs.mkdirSync(TEMP_DIR, { recursive: true });
 console.log("📂 Dossier temp :", TEMP_DIR);
 
-// --- SERVIR LES FICHIERS GÉNÉRÉS ---
 app.use("/Temp", express.static(TEMP_DIR));
 
-// --- NAPS2 : recherche dynamique (plus de chemin codé en dur) ---
+// ─────────────────────────────────────────────
+// NAPS2 : recherche dynamique
+// ─────────────────────────────────────────────
 const POSSIBLE_NAPS2_PATHS = [
   "C:\\Program Files\\NAPS2\\NAPS2.Console.exe",
   "C:\\Program Files (x86)\\NAPS2\\NAPS2.Console.exe",
@@ -37,7 +38,72 @@ if (!NAPS2_EXE) {
   console.log("✅ NAPS2 trouvé :", NAPS2_EXE);
 }
 
-// --- TWAIN via node-twain ---
+// ─────────────────────────────────────────────
+// DRIVERS SUPPORTÉS
+// Chaque driver a : un label lisible, sa valeur
+// CLI pour NAPS2, et les OS où il est disponible.
+// ─────────────────────────────────────────────
+const SUPPORTED_DRIVERS = {
+  wia: {
+    label:       "WIA (Windows Image Acquisition)",
+    cliValue:    "wia",
+    platforms:   ["win32"],
+    description: "Driver natif Windows, recommandé pour scanners USB et réseau"
+  },
+  twain: {
+    label:       "TWAIN",
+    cliValue:    "twain",
+    platforms:   ["win32", "darwin", "linux"],
+    description: "Standard universel — attention : nécessite une session graphique"
+  },
+  escl: {
+    label:       "eSCL / AirScan (réseau IP)",
+    cliValue:    "escl",
+    platforms:   ["win32", "darwin", "linux"],
+    description: "Scan via HTTP réseau, idéal pour scanners Wi-Fi (ex: EPSON L6270)"
+  },
+  sane: {
+    label:       "SANE",
+    cliValue:    "sane",
+    platforms:   ["linux", "darwin"],
+    description: "Backend Linux/macOS open-source"
+  },
+  apple: {
+    label:       "Apple (ImageCaptureCore)",
+    cliValue:    "apple",
+    platforms:   ["darwin"],
+    description: "Driver natif macOS uniquement"
+  }
+};
+
+// Driver par défaut selon la plateforme
+function getDefaultDriver() {
+  switch (os.platform()) {
+    case "win32":  return "wia";
+    case "darwin": return "apple";
+    case "linux":  return "sane";
+    default:       return "wia";
+  }
+}
+
+// Vérifie si un driver est compatible avec la plateforme courante
+function isDriverAvailable(driverKey) {
+  const driver = SUPPORTED_DRIVERS[driverKey];
+  return driver && driver.platforms.includes(os.platform());
+}
+
+// Valide et retourne la valeur CLI du driver, ou le driver par défaut
+function resolveDriver(driverParam) {
+  const key = (driverParam || "").toLowerCase().trim();
+  if (key && SUPPORTED_DRIVERS[key] && isDriverAvailable(key)) {
+    return key;
+  }
+  return getDefaultDriver();
+}
+
+// ─────────────────────────────────────────────
+// TWAIN via node-twain (optionnel)
+// ─────────────────────────────────────────────
 let twainApp = null;
 try {
   const { TwainSDK, TWCY_FRANCE, TWLG_FRENCH } = require("node-twain");
@@ -59,56 +125,116 @@ try {
 }
 
 // ─────────────────────────────────────────────
-// GET /api/health  — ping pour Angular
+// GET /api/health
 // ─────────────────────────────────────────────
 app.get("/api/health", (req, res) => {
+  const platform = os.platform();
+
+  // Drivers disponibles sur cette plateforme
+  const availableDrivers = Object.entries(SUPPORTED_DRIVERS)
+    .filter(([key]) => isDriverAvailable(key))
+    .map(([key, d]) => ({
+      key,
+      label:       d.label,
+      description: d.description
+    }));
+
   res.json({
-    status:    200,
-    service:   "PjCare",
-    naps2:     NAPS2_EXE ? "found" : "missing",
-    twain:     twainApp  ? "ready" : "unavailable",
-    timestamp: new Date().toISOString()
+    status:        200,
+    service:       "PjCare",
+    naps2:         NAPS2_EXE ? "found" : "missing",
+    naps2Path:     NAPS2_EXE || null,
+    twain:         twainApp  ? "ready" : "unavailable",
+    platform,
+    defaultDriver: getDefaultDriver(),
+    drivers:       availableDrivers,
+    timestamp:     new Date().toISOString()
   });
 });
 
 // ─────────────────────────────────────────────
-// GET /api/GetListScanner
+// GET /api/drivers
+// Retourne la liste des drivers disponibles sur ce poste
+// ─────────────────────────────────────────────
+app.get("/api/drivers", (req, res) => {
+  const platform = os.platform();
+
+  const drivers = Object.entries(SUPPORTED_DRIVERS)
+    .filter(([key]) => isDriverAvailable(key))
+    .map(([key, d]) => ({
+      key,
+      label:       d.label,
+      description: d.description,
+      isDefault:   key === getDefaultDriver()
+    }));
+
+  res.json({
+    status:   200,
+    platform,
+    drivers
+  });
+});
+
+// ─────────────────────────────────────────────
+// GET /api/GetListScanner?driver=wia|twain|escl|sane|apple
+// Liste les scanners pour un driver donné
 // ─────────────────────────────────────────────
 app.get("/api/GetListScanner", (req, res) => {
   if (!NAPS2_EXE) {
     return res.status(503).json({ status: 503, error: "NAPS2 introuvable", scanners: [] });
   }
 
-  execFile(NAPS2_EXE, ["--listdevices", "--driver", "wia"],
+  const driverKey = resolveDriver(req.query.driver);
+  const driverDef = SUPPORTED_DRIVERS[driverKey];
+
+  console.log(`🔍 Listing scanners avec driver: ${driverKey}`);
+
+  execFile(NAPS2_EXE, ["--listdevices", "--driver", driverDef.cliValue],
     { windowsHide: true, timeout: 15000 },
     (err, stdout, stderr) => {
       console.log("listdevices stdout:", stdout);
       if (stderr) console.log("listdevices stderr:", stderr);
 
       if (err || !stdout.trim()) {
-        // Fallback : retourner le scanner connu directement
+        // Fallback uniquement pour WIA avec l'EPSON connu
+        if (driverKey === "wia") {
+          console.warn("⚠️  WIA listing échoué, fallback scanner connu");
+          return res.json({
+            status:  200,
+            driver:  driverKey,
+            scanners: ["EPSON L6270 Series (10.1.10.33)"]
+          });
+        }
         return res.json({
-          status: 200,
-          scanners: ["EPSON L6270 Series (10.1.10.33)"]
+          status:   200,
+          driver:   driverKey,
+          scanners: [],
+          warning:  `Aucun scanner trouvé avec le driver ${driverKey}`
         });
       }
 
       const scanners = stdout
-        .split('\n')
+        .split("\n")
         .map(l => l.trim())
         .filter(l => l.length > 0);
 
-      res.json({ status: 200, scanners });
+      res.json({ status: 200, driver: driverKey, scanners });
     }
   );
 });
 
-
 // ─────────────────────────────────────────────
-// GET /api/Acquire?source=…&dpi=…&jpegquality=…&format=…&name=…
+// GET /api/Acquire
+//   ?source=…      nom du scanner (obligatoire)
+//   &driver=…      wia | twain | escl | sane | apple  (optionnel, défaut auto)
+//   &dpi=…         150 par défaut
+//   &jpegquality=… 75 par défaut
+//   &format=…      jpg par défaut (jpg | png | pdf | tiff)
+//   &name=…        nom de base du fichier (optionnel)
+//   &bitdepth=…    color | gray | bw  (optionnel, défaut color)
+//   &duplex=…      true | false  (optionnel)
 // ─────────────────────────────────────────────
 app.get("/api/Acquire", (req, res) => {
-  // 1) Vérifier NAPS2
   if (!NAPS2_EXE) {
     return res.status(503).json({
       status: 503,
@@ -116,46 +242,86 @@ app.get("/api/Acquire", (req, res) => {
     });
   }
 
-  const { source, dpi = 150, jpegquality = 75, format = "jpg", name } = req.query;
+  const {
+    source,
+    driver,
+    dpi         = 150,
+    jpegquality = 75,
+    format      = "jpg",
+    name,
+    bitdepth    = "color",
+    duplex      = "false"
+  } = req.query;
 
-  // 2) Vérifier le scanner source
   if (!source) {
     return res.status(400).json({ status: 400, error: "Paramètre 'source' manquant" });
   }
 
-  // 3) Sanitiser le nom de fichier
+  // Résoudre le driver
+  const driverKey = resolveDriver(driver);
+  const driverDef = SUPPORTED_DRIVERS[driverKey];
+  console.log(`📷 Scan avec driver: ${driverKey} | source: ${source}`);
+
+  // Valider le format
+  const ALLOWED_FORMATS = ["jpg", "png", "pdf", "tiff"];
+  const safeFormat = ALLOWED_FORMATS.includes(format.toLowerCase()) ? format.toLowerCase() : "jpg";
+
+  // Valider bitdepth
+  const ALLOWED_BITDEPTHS = ["color", "gray", "bw"];
+  const safeBitdepth = ALLOWED_BITDEPTHS.includes(bitdepth.toLowerCase()) ? bitdepth.toLowerCase() : "color";
+
+  // Sanitiser le nom de fichier
   let baseName = source.toString().replace(/[^\p{L}\p{N}_-]/gu, "_");
   if (name) {
     const safe = name.toString().trim().replace(/[^\p{L}\p{N}_-]/gu, "_");
     if (safe.length > 0) baseName = safe;
   }
 
-  const filename = `${baseName}-${Date.now()}.${format}`;
+  const filename = `${baseName}-${Date.now()}.${safeFormat}`;
   const outPath  = path.join(TEMP_DIR, filename);
   console.log("→ Scan vers :", outPath);
 
-  // 4) Arguments NAPS2
+  // Construction des arguments NAPS2
   const args = [
     "--noprofile",
-    "--driver",      "wia",
+    "--driver",      driverDef.cliValue,
     "--device",      source.toString(),
     "--output",      outPath,
     "--dpi",         dpi.toString(),
-    "--bitdepth",    "color",
-    "--jpegquality", jpegquality.toString()
+    "--bitdepth",    safeBitdepth,
   ];
 
-  // 5) Lancer NAPS2
-  execFile(NAPS2_EXE, args, { windowsHide: true, timeout: 60000 }, (err, stdout, stderr) => {
+  // jpegquality uniquement pour jpg
+  if (safeFormat === "jpg") {
+    args.push("--jpegquality", jpegquality.toString());
+  }
+
+  // Duplex (recto-verso) si demandé
+  if (duplex === "true") {
+    args.push("--duplex");
+  }
+
+  // Pour eSCL, certains scanners réseau nécessitent un délai plus long
+  const timeoutMs = driverKey === "escl" ? 90000 : 60000;
+
+  execFile(NAPS2_EXE, args, { windowsHide: true, timeout: timeoutMs }, (err, stdout, stderr) => {
     console.log("← stdout:", stdout);
     if (stderr) console.error("← stderr:", stderr);
 
     if (err) {
-      return res.status(500).json({ status: 500, error: stderr || err.message });
+      return res.status(500).json({
+        status: 500,
+        driver: driverKey,
+        error:  stderr || err.message
+      });
     }
 
     if (!fs.existsSync(outPath)) {
-      return res.status(500).json({ status: 500, error: "Scan terminé mais fichier introuvable" });
+      return res.status(500).json({
+        status: 500,
+        driver: driverKey,
+        error:  "Scan terminé mais fichier introuvable"
+      });
     }
 
     fs.readFile(outPath, (readErr, data) => {
@@ -163,13 +329,15 @@ app.get("/api/Acquire", (req, res) => {
         return res.status(500).json({ status: 500, error: readErr.message });
       }
 
-      // Nettoyer le fichier temp après envoi (optionnel)
       fs.unlink(outPath, () => {});
 
       res.json({
-        status: 200,
-        data:   data.toString("base64"),
-        file:   filename
+        status:   200,
+        driver:   driverKey,
+        data:     data.toString("base64"),
+        file:     filename,
+        format:   safeFormat,
+        bitdepth: safeBitdepth
       });
     });
   });
@@ -181,5 +349,8 @@ app.get("/api/Acquire", (req, res) => {
 const PORT = 7777;
 app.listen(PORT, "127.0.0.1", () => {
   console.log(`✅ PjCare API démarrée sur http://127.0.0.1:${PORT}`);
+  console.log(`   Plateforme   : ${os.platform()}`);
+  console.log(`   Driver défaut: ${getDefaultDriver()}`);
   console.log(`   Health check : http://127.0.0.1:${PORT}/api/health`);
+  console.log(`   Drivers      : http://127.0.0.1:${PORT}/api/drivers`);
 });
