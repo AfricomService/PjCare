@@ -24,13 +24,8 @@ app.use("/Temp", express.static(TEMP_DIR));
 // ─────────────────────────────────────────────
 // NAPS2 : recherche dynamique
 // ─────────────────────────────────────────────
-const POSSIBLE_NAPS2_PATHS = [
-  "C:\\Program Files\\NAPS2\\NAPS2.Console.exe",
-  "C:\\Program Files (x86)\\NAPS2\\NAPS2.Console.exe",
-  path.join(process.env.LOCALAPPDATA || "", "NAPS2", "NAPS2.Console.exe"),
-  path.join(process.env.APPDATA     || "", "NAPS2", "NAPS2.Console.exe"),
-];
-const NAPS2_EXE = POSSIBLE_NAPS2_PATHS.find(p => fs.existsSync(p)) || null;
+const { findNaps2 } = require("./config");
+const NAPS2_EXE = findNaps2();
 
 if (!NAPS2_EXE) {
   console.warn("⚠️  NAPS2 introuvable. Le scan ne fonctionnera pas.");
@@ -60,7 +55,7 @@ const SUPPORTED_DRIVERS = {
     label:       "eSCL / AirScan (réseau IP)",
     cliValue:    "escl",
     platforms:   ["win32", "darwin", "linux"],
-    description: "Scan via HTTP réseau, idéal pour scanners Wi-Fi (ex: EPSON L6270)"
+    description: "Scan via HTTP réseau, idéal pour scanners Wi-Fi"
   },
   sane: {
     label:       "SANE",
@@ -195,16 +190,10 @@ app.get("/api/GetListScanner", (req, res) => {
       console.log("listdevices stdout:", stdout);
       if (stderr) console.log("listdevices stderr:", stderr);
 
-      if (err || !stdout.trim()) {
-        // Fallback uniquement pour WIA avec l'EPSON connu
-        if (driverKey === "wia") {
-          console.warn("⚠️  WIA listing échoué, fallback scanner connu");
-          return res.json({
-            status:  200,
-            driver:  driverKey,
-            scanners: ["EPSON L6270 Series (10.1.10.33)"]
-          });
-        }
+// Même si err est présent, vérifier d'abord si stdout contient des données
+      // (NAPS2 peut retourner exit code non-zéro mais quand même lister les scanners)
+      if (!stdout.trim()) {
+        console.warn(`⚠️  Aucun scanner détecté avec le driver ${driverKey}`);
         return res.json({
           status:   200,
           driver:   driverKey,
@@ -242,15 +231,19 @@ app.get("/api/Acquire", (req, res) => {
     });
   }
 
-  const {
+const {
     source,
     driver,
-    dpi         = 150,
-    jpegquality = 75,
-    format      = "jpg",
+    dpi              = 150,
+    jpegquality      = 75,
+    format           = "jpg",
     name,
-    bitdepth    = "color",
-    duplex      = "false"
+    bitdepth         = "color",
+    duplex           = "false",
+    excludeblank     = "false",
+    blankthreshold   = "70",
+    coveragethreshold = "25",
+    pagesize          = "A4" 
   } = req.query;
 
   if (!source) {
@@ -289,6 +282,7 @@ app.get("/api/Acquire", (req, res) => {
     "--output",      outPath,
     "--dpi",         dpi.toString(),
     "--bitdepth",    safeBitdepth,
+    "--pagesize",    pagesize,
   ];
 
   // jpegquality uniquement pour jpg
@@ -296,9 +290,15 @@ app.get("/api/Acquire", (req, res) => {
     args.push("--jpegquality", jpegquality.toString());
   }
 
-  // Duplex (recto-verso) si demandé
+// Duplex (recto-verso) si demandé
   if (duplex === "true") {
     args.push("--duplex");
+  }
+
+  // Pages blanches
+  if (excludeblank === "true") {
+    args.push("--excludeblank", blankthreshold.toString());
+    args.push("--blankpagecoverage", coveragethreshold.toString());
   }
 
   // Pour eSCL, certains scanners réseau nécessitent un délai plus long
