@@ -12,14 +12,9 @@
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^5.1.0",
-    "node-twain": "^0.0.16",
     "pdf-lib": "^1.17.1",
     "pdfkit": "^0.17.1",
     "sharp": "^0.34.5"
-  },
-  "devDependencies": {
-    "electron": "^25.0.0",
-    "electron-builder": "^26.0.12"
   },
   "build": {
     "appId": "com.africom.pjcare",
@@ -45,5 +40,9 @@
       "allowElevation": true,
       "allowToChangeInstallationDirectory": true
     }
+  },
+  "devDependencies": {
+    "electron": "^16.0.0",
+    "electron-builder": "^26.8.1"
   }
 }

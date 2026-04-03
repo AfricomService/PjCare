@@ -9,7 +9,7 @@ const os           = require("os");
 const app = express();
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "200mb" }));
 
 // ─────────────────────────────────────────────
 // TEMP DIR
@@ -561,7 +561,132 @@ async function buildTiffFromPages(tiffPath, pageIndices, outPath) {
     console.warn("  TIFF multi-pages : seule la première page conservée est incluse (sharp ne supporte pas le TIFF multi-pages en écriture).");
   }
 }
+// ─────────────────────────────────────────────
+// POST /api/MergePages
+// Body JSON : { pages: [{data, format}], outputFormat, jpegquality, name }
+// ─────────────────────────────────────────────
+app.post("/api/MergePages", async (req, res) => {
+  const { pages, outputFormat = "pdf", jpegquality = 75, name = "document" } = req.body;
 
+  if (!Array.isArray(pages) || pages.length === 0) {
+    return res.status(400).json({ status: 400, error: "Paramètre 'pages' manquant ou vide" });
+  }
+
+  const ALLOWED_FORMATS = ["jpg", "png", "pdf", "tiff"];
+  const safeFormat = ALLOWED_FORMATS.includes(outputFormat.toLowerCase()) ? outputFormat.toLowerCase() : "pdf";
+  const safeName = (name || "document").toString().trim().replace(/[^\p{L}\p{N}_-]/gu, "_") || "document";
+  const timestamp = Date.now();
+  const finalFile = `${safeName}-merged-${timestamp}.${safeFormat}`;
+  const finalPath = path.join(TEMP_DIR, finalFile);
+
+  console.log(`🗂️  MergePages | ${pages.length} page(s) → ${safeFormat}`);
+
+  try {
+    const tmpFiles = [];
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i];
+      if (!page.data) return res.status(400).json({ status: 400, error: `Page ${i} : champ 'data' manquant` });
+      const pageFormat = (page.format || "jpg").toLowerCase();
+      const ext = pageFormat === "tiff" ? "tiff" : pageFormat === "pdf" ? "pdf" : pageFormat === "png" ? "png" : "jpg";
+      const tmpPath = path.join(TEMP_DIR, `__merge_${timestamp}_p${i}.${ext}`);
+      fs.writeFileSync(tmpPath, Buffer.from(page.data, "base64"));
+      tmpFiles.push({ path: tmpPath, format: pageFormat });
+    }
+
+    if (safeFormat === "pdf") {
+      await _mergeToPdf(tmpFiles, finalPath, timestamp);
+    } else if (safeFormat === "tiff") {
+      await _mergeToTiff(tmpFiles, finalPath);
+    } else {
+      // jpg/png : première page uniquement (format mono-page)
+      const first = tmpFiles[0];
+      if (sharp && first.format !== safeFormat) {
+        const pipeline = sharp(first.path);
+        if (safeFormat === "jpg") await pipeline.jpeg({ quality: parseInt(jpegquality, 10) || 75 }).toFile(finalPath);
+        else await pipeline.png().toFile(finalPath);
+      } else {
+        fs.copyFileSync(first.path, finalPath);
+      }
+    }
+
+    for (const f of tmpFiles) fs.unlink(f.path, () => {});
+    return sendFile(res, finalPath, finalFile, safeFormat, "color", "merge", true);
+
+  } catch (err) {
+    console.error("❌ MergePages erreur :", err.message);
+    return res.status(500).json({ status: 500, error: err.message });
+  }
+});
+
+async function _mergeToPdf(tmpFiles, outPath, timestamp) {
+  let PDFDocument;
+  try { ({ PDFDocument } = require("pdf-lib")); }
+  catch { return _mergeToPdfFallback(tmpFiles, outPath, timestamp); }
+
+  const pdfDoc = await PDFDocument.create();
+  for (let i = 0; i < tmpFiles.length; i++) {
+    const f = tmpFiles[i];
+    if (f.format === "pdf") {
+      const srcBytes = fs.readFileSync(f.path);
+      const srcPdf = await PDFDocument.load(srcBytes);
+      const srcPages = await pdfDoc.copyPages(srcPdf, srcPdf.getPageIndices());
+      for (const p of srcPages) pdfDoc.addPage(p);
+    } else {
+      if (f.format === "tiff" && sharp) {
+        let meta; try { meta = await sharp(f.path).metadata(); } catch { meta = { pages: 1 }; }
+        const pageCount = meta.pages || 1;
+        for (let p = 0; p < pageCount; p++) {
+          const pagePng = path.join(TEMP_DIR, `__merge_pdf_p${i}_tiff${p}_${timestamp}.png`);
+          await sharp(f.path, { page: p }).png().toFile(pagePng);
+          const pngBytes = fs.readFileSync(pagePng);
+          const img = await pdfDoc.embedPng(pngBytes);
+          const page = pdfDoc.addPage([img.width, img.height]);
+          page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height });
+          fs.unlink(pagePng, () => {});
+        }
+        continue;
+      }
+      let imgBytes;
+      if (sharp && f.format !== "jpg") {
+        const pngTmp = path.join(TEMP_DIR, `__merge_pdf_p${i}_${timestamp}.png`);
+        await sharp(f.path).png().toFile(pngTmp);
+        imgBytes = fs.readFileSync(pngTmp);
+        fs.unlink(pngTmp, () => {});
+        const img = await pdfDoc.embedPng(imgBytes);
+        const page = pdfDoc.addPage([img.width, img.height]);
+        page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height });
+      } else {
+        imgBytes = fs.readFileSync(f.path);
+        const img = await pdfDoc.embedJpg(imgBytes);
+        const page = pdfDoc.addPage([img.width, img.height]);
+        page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height });
+      }
+    }
+  }
+  const pdfBytes = await pdfDoc.save();
+  fs.writeFileSync(outPath, pdfBytes);
+}
+
+async function _mergeToPdfFallback(tmpFiles, outPath, timestamp) {
+  console.warn("  _mergeToPdfFallback : première page uniquement (installez pdf-lib)");
+  const first = tmpFiles[0];
+  if (sharp && first.format !== "pdf") {
+    const pngTmp = outPath.replace(/\.pdf$/i, ".png");
+    await sharp(first.path).png().toFile(pngTmp);
+    fs.renameSync(pngTmp, outPath);
+  } else {
+    fs.copyFileSync(first.path, outPath);
+  }
+}
+
+async function _mergeToTiff(tmpFiles, outPath) {
+  if (sharp) {
+    await sharp(tmpFiles[0].path).tiff().toFile(outPath);
+    if (tmpFiles.length > 1) console.warn("  TIFF multi-pages : première page uniquement (limitation sharp).");
+  } else {
+    fs.copyFileSync(tmpFiles[0].path, outPath);
+  }
+}
 // ─────────────────────────────────────────────
 // Démarrage
 // ─────────────────────────────────────────────
